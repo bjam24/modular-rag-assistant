@@ -14,7 +14,7 @@ DEFAULT_PROVIDER = os.getenv("DEFAULT_PROVIDER", "ollama")
 
 OLLAMA_BASE_URL = os.getenv(
     "OLLAMA_BASE_URL",
-    "http://localhost:11434",
+    "http://host.docker.internal:11434",
 )
 
 OLLAMA_GEN_MODEL = "llama3.1:8b"

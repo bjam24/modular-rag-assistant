@@ -103,13 +103,15 @@ class ModularRAGPipeline:
     def run_chat(
         self,
         query: str,
-        history: str,
-        top_k: int | None = None,
-        faiss_k: int = DEFAULT_FAISS_K,
-        tfidf_k: int = DEFAULT_TFIDF_K,
-        alpha: float = DEFAULT_ALPHA,
+        history: list,
+        top_k: int = 5,
+        faiss_k: int = 20,
+        tfidf_k: int = 20,
+        alpha: float = 0.6,
         retrieval_mode: str = "hybrid",
         generation_mode: str = "balanced",
+        llm_provider: str = "ollama",
+        llm_model: str = "llama3",
     ) -> dict:
         """
         Run the RAG pipeline for question answering.
@@ -120,7 +122,6 @@ class ModularRAGPipeline:
 
         selected_top_k = top_k or generation_settings["top_k"]
         max_context_chars = generation_settings["max_context_chars"]
-        model = generation_settings["model"]
 
         rewritten_query, corrected_query = self._rewrite_query(query)
 
@@ -141,7 +142,8 @@ class ModularRAGPipeline:
                     "query": query,
                     "retrieval_mode": retrieval_mode,
                     "generation_mode": generation_mode,
-                    "model": model,
+                    "llm_provider": llm_provider,
+                    "model": llm_model,
                     "top_k": selected_top_k,
                     "input_tokens": 0,
                     "output_tokens": 0,
@@ -160,6 +162,8 @@ class ModularRAGPipeline:
                 "rewritten_query": rewritten_query,
                 "retrieval_mode": retrieval_mode,
                 "generation_mode": generation_mode,
+                "llm_provider": llm_provider,
+                "llm_model": llm_model,
                 "latency": latency_sec,
                 "tokens": {
                     "input": 0,
@@ -168,25 +172,46 @@ class ModularRAGPipeline:
                 "cost_usd": 0.0,
             }
 
-        # Optional strict filtering can be re-enabled later.
-        # if not is_context_sufficient(results):
-        #     return {"answer": FALLBACK_ANSWER, "results": results}
-
         context = build_grounded_context(results)
         context = context[:max_context_chars]
 
-        answer = generate_answer(rewritten_query, context, history)
-
-        input_tokens = estimate_tokens(
-            rewritten_query + "\n" + context + "\n" + (history or "")
+        generation_output = generate_answer(
+            query=rewritten_query,
+            context=context,
+            history=history,
+            provider=llm_provider,
+            model=llm_model,
         )
-        output_tokens = estimate_tokens(answer)
 
-        cost_usd = estimate_cost_usd(
-            model=model,
-            input_tokens=input_tokens,
-            output_tokens=output_tokens,
-        )
+        if isinstance(generation_output, dict):
+            answer = generation_output.get("answer", "")
+
+            input_tokens = generation_output.get("input_tokens")
+            output_tokens = generation_output.get("output_tokens")
+            cost_usd = generation_output.get("cost_usd")
+        else:
+            answer = generation_output
+            input_tokens = None
+            output_tokens = None
+            cost_usd = None
+
+        if input_tokens is None:
+            input_tokens = estimate_tokens(
+                rewritten_query + "\n" + context + "\n" + str(history or "")
+            )
+
+        if output_tokens is None:
+            output_tokens = estimate_tokens(answer)
+
+        if cost_usd is None:
+            if llm_provider == "ollama":
+                cost_usd = 0.0
+            else:
+                cost_usd = estimate_cost_usd(
+                    model=llm_model,
+                    input_tokens=input_tokens,
+                    output_tokens=output_tokens,
+                )
 
         latency_sec = round(time.time() - start_time, 3)
 
@@ -204,7 +229,8 @@ class ModularRAGPipeline:
                 "query": query,
                 "retrieval_mode": retrieval_mode,
                 "generation_mode": generation_mode,
-                "model": model,
+                "llm_provider": llm_provider,
+                "model": llm_model,
                 "top_k": selected_top_k,
                 "input_tokens": input_tokens,
                 "output_tokens": output_tokens,
@@ -223,6 +249,8 @@ class ModularRAGPipeline:
             "rewritten_query": rewritten_query,
             "retrieval_mode": retrieval_mode,
             "generation_mode": generation_mode,
+            "llm_provider": llm_provider,
+            "llm_model": llm_model,
             "latency": latency_sec,
             "tokens": {
                 "input": input_tokens,
@@ -238,25 +266,124 @@ class ModularRAGPipeline:
         faiss_k: int = DEFAULT_FAISS_K,
         tfidf_k: int = DEFAULT_TFIDF_K,
         alpha: float = DEFAULT_ALPHA,
+        retrieval_mode: str = "hybrid",
+        llm_provider: str = "ollama",
+        llm_model: str = "llama3",
     ) -> dict:
         """
         Run the RAG pipeline for topic summarization.
         """
+        start_time = time.time()
+
         results = self.retrieve(
             query=topic,
             top_k=top_k,
             faiss_k=faiss_k,
             tfidf_k=tfidf_k,
             alpha=alpha,
+            retrieval_mode=retrieval_mode,
         )
 
         if not results:
-            return {"summary": FALLBACK_SUMMARY, "results": []}
+            latency_sec = round(time.time() - start_time, 3)
+
+            return {
+                "summary": FALLBACK_SUMMARY,
+                "results": [],
+                "retrieval_mode": retrieval_mode,
+                "llm_provider": llm_provider,
+                "llm_model": llm_model,
+                "latency": latency_sec,
+                "tokens": {
+                    "input": 0,
+                    "output": 0,
+                },
+                "cost_usd": 0.0,
+            }
 
         if not is_context_sufficient(results):
-            return {"summary": FALLBACK_SUMMARY, "results": results}
+            latency_sec = round(time.time() - start_time, 3)
+
+            return {
+                "summary": FALLBACK_SUMMARY,
+                "results": results,
+                "retrieval_mode": retrieval_mode,
+                "llm_provider": llm_provider,
+                "llm_model": llm_model,
+                "latency": latency_sec,
+                "tokens": {
+                    "input": 0,
+                    "output": 0,
+                },
+                "cost_usd": 0.0,
+            }
 
         context = build_grounded_context(results)
-        summary = generate_summary(topic, context)
 
-        return {"summary": summary, "results": results}
+        generation_output = generate_summary(
+            topic=topic,
+            context=context,
+            provider=llm_provider,
+            model=llm_model,
+        )
+
+        if isinstance(generation_output, dict):
+            summary = generation_output.get("summary") or generation_output.get("answer", "")
+
+            input_tokens = generation_output.get("input_tokens")
+            output_tokens = generation_output.get("output_tokens")
+            cost_usd = generation_output.get("cost_usd")
+        else:
+            summary = generation_output
+            input_tokens = None
+            output_tokens = None
+            cost_usd = None
+
+        if input_tokens is None:
+            input_tokens = estimate_tokens(topic + "\n" + context)
+
+        if output_tokens is None:
+            output_tokens = estimate_tokens(summary)
+
+        if cost_usd is None:
+            if llm_provider == "ollama":
+                cost_usd = 0.0
+            else:
+                cost_usd = estimate_cost_usd(
+                    model=llm_model,
+                    input_tokens=input_tokens,
+                    output_tokens=output_tokens,
+                )
+
+        latency_sec = round(time.time() - start_time, 3)
+
+        log_query(
+            {
+                "query": topic,
+                "retrieval_mode": retrieval_mode,
+                "generation_mode": "summary",
+                "llm_provider": llm_provider,
+                "model": llm_model,
+                "top_k": top_k,
+                "input_tokens": input_tokens,
+                "output_tokens": output_tokens,
+                "cost_usd": cost_usd,
+                "latency_sec": latency_sec,
+                "num_sources": len(results),
+                "fallback": False,
+            }
+        )
+
+        return {
+            "summary": summary,
+            "results": results,
+            "retrieval_mode": retrieval_mode,
+            "llm_provider": llm_provider,
+            "llm_model": llm_model,
+            "latency": latency_sec,
+            "tokens": {
+                "input": input_tokens,
+                "output": output_tokens,
+            },
+            "cost_usd": cost_usd,
+        }

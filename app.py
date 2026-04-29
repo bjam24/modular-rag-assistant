@@ -21,6 +21,15 @@ QUALITY_MODE_MAP = {
     "Accurate": "accurate",
 }
 
+OLLAMA_MODELS = [
+    "llama3.1:8b",
+]
+
+OPENAI_MODELS = [
+    "gpt-4.1-mini",
+    "gpt-4o-mini",
+]
+
 
 @st.cache_resource
 def cached_load_index() -> faiss.Index:
@@ -35,6 +44,35 @@ def cached_load_chunks() -> list[dict]:
 @st.cache_resource
 def cached_build_tfidf_index(chunks: list[dict]) -> tuple:
     return build_tfidf_index(chunks)
+
+
+def init_session_state() -> None:
+    if "messages" not in st.session_state:
+        st.session_state.messages = []
+
+    if "total_cost_usd" not in st.session_state:
+        st.session_state.total_cost_usd = 0.0
+
+    if "total_input_tokens" not in st.session_state:
+        st.session_state.total_input_tokens = 0
+
+    if "total_output_tokens" not in st.session_state:
+        st.session_state.total_output_tokens = 0
+
+
+def render_session_usage() -> None:
+    session_cost_placeholder.metric(
+        "Total session cost (USD)",
+        f"${st.session_state.total_cost_usd:.6f}",
+    )
+    session_input_tokens_placeholder.metric(
+        "Total input tokens",
+        st.session_state.total_input_tokens,
+    )
+    session_output_tokens_placeholder.metric(
+        "Total output tokens",
+        st.session_state.total_output_tokens,
+    )
 
 
 st.set_page_config(page_title="Modular RAG Assistant", layout="wide")
@@ -60,25 +98,14 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
+init_session_state()
+
 st.title("Modular RAG Assistant")
 st.markdown(
     "Ask questions about your documents using a modular RAG pipeline with "
     "hybrid retrieval, reranking, and transparent usage metrics."
 )
 st.caption("⚡ Powered by Hybrid RAG: semantic search + keyword search + reranking")
-
-
-if "messages" not in st.session_state:
-    st.session_state.messages = []
-
-if "total_cost_usd" not in st.session_state:
-    st.session_state.total_cost_usd = 0.0
-
-if "total_input_tokens" not in st.session_state:
-    st.session_state.total_input_tokens = 0
-
-if "total_output_tokens" not in st.session_state:
-    st.session_state.total_output_tokens = 0
 
 
 index = None
@@ -132,6 +159,31 @@ with st.sidebar:
     generation_mode = QUALITY_MODE_MAP[quality_label]
     st.caption("Choose how much context the assistant should use.")
 
+    with st.expander("LLM provider settings"):
+        llm_provider_label = st.selectbox(
+            "Provider",
+            ["Ollama local", "OpenAI API"],
+            help="Choose whether answers should be generated locally or through OpenAI API.",
+        )
+
+        if llm_provider_label == "Ollama local":
+            llm_provider = "ollama"
+            llm_model = st.selectbox(
+                "Model",
+                OLLAMA_MODELS,
+                index=0,
+            )
+            st.caption("Runs locally through Ollama. API cost is always $0.")
+
+        else:
+            llm_provider = "openai"
+            llm_model = st.selectbox(
+                "Model",
+                OPENAI_MODELS,
+                index=0,
+            )
+            st.caption("Uses OpenAI API. Cost is estimated from input and output tokens.")
+
     with st.expander("Advanced retrieval settings"):
         retrieval_mode = st.selectbox(
             "Retrieval mode",
@@ -156,13 +208,14 @@ with st.sidebar:
         )
 
     with st.expander("Session usage"):
-        st.metric("Estimated API cost", f"${st.session_state.total_cost_usd:.6f}")
-        st.metric("Input tokens", st.session_state.total_input_tokens)
-        st.metric("Output tokens", st.session_state.total_output_tokens)
-        st.caption(
-            "Local Ollama models show $0 API cost. "
-            "OpenAI models use configured pricing."
-        )
+        session_cost_placeholder = st.empty()
+        session_input_tokens_placeholder = st.empty()
+        session_output_tokens_placeholder = st.empty()
+
+        if llm_provider == "openai":
+            st.caption("Using OpenAI API — cost accumulates per query.")
+        else:
+            st.caption("Using local model — no API cost.")
 
     st.markdown(
         '<div class="sidebar-section-title">Your documents</div>',
@@ -202,6 +255,9 @@ with st.sidebar:
         st.rerun()
 
 
+render_session_usage()
+
+
 if not knowledge_base_ready:
     st.info("Upload documents in the sidebar, then click 'Rebuild knowledge base'.")
     st.stop()
@@ -233,6 +289,8 @@ if mode == "Chat":
                     alpha=alpha,
                     retrieval_mode=retrieval_mode,
                     generation_mode=generation_mode,
+                    llm_provider=llm_provider,
+                    llm_model=llm_model,
                 )
 
                 answer = output["answer"]
@@ -246,6 +304,8 @@ if mode == "Chat":
                 st.session_state.total_cost_usd += cost
                 st.session_state.total_input_tokens += tokens.get("input", 0)
                 st.session_state.total_output_tokens += tokens.get("output", 0)
+
+                render_session_usage()
 
             except Exception as e:
                 answer = f"An error occurred: {e}"
@@ -275,10 +335,13 @@ if mode == "Chat":
                 with col3:
                     st.metric(
                         "Tokens",
-                        f"{tokens.get('input', 0)} in / {tokens.get('output', 0)} out",
+                        f"{tokens.get('input', 0)} in / "
+                        f"{tokens.get('output', 0)} out",
                     )
 
                 st.caption(
+                    f"Provider: {llm_provider} | "
+                    f"Model: {llm_model} | "
                     f"Quality mode: {quality_label} | "
                     f"Retrieval mode: {retrieval_mode}"
                 )
@@ -312,17 +375,49 @@ elif mode == "Summary":
                     tfidf_k=20,
                     alpha=alpha,
                     retrieval_mode=retrieval_mode,
+                    llm_provider=llm_provider,
+                    llm_model=llm_model,
                 )
 
                 summary = output["summary"]
                 results = output["results"]
 
+                tokens = output.get("tokens", {})
+                cost = output.get("cost_usd", 0.0)
+
+                st.session_state.total_cost_usd += cost
+                st.session_state.total_input_tokens += tokens.get("input", 0)
+                st.session_state.total_output_tokens += tokens.get("output", 0)
+
+                render_session_usage()
+
             except Exception as e:
                 summary = f"An error occurred: {e}"
                 results = []
+                tokens = {"input": 0, "output": 0}
+                cost = 0.0
 
         st.subheader("Summary")
         st.write(summary)
+
+        with st.expander("Usage details"):
+            col1, col2 = st.columns(2)
+
+            with col1:
+                st.metric("Estimated cost", f"${cost:.6f}")
+
+            with col2:
+                st.metric(
+                    "Tokens",
+                    f"{tokens.get('input', 0)} in / "
+                    f"{tokens.get('output', 0)} out",
+                )
+
+            st.caption(
+                f"Provider: {llm_provider} | "
+                f"Model: {llm_model} | "
+                f"Retrieval mode: {retrieval_mode}"
+            )
 
         if results:
             st.subheader("Sources")
