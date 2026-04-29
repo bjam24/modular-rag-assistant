@@ -1,13 +1,5 @@
 """
 Streamlit UI for the Modular RAG Assistant.
-
-User-friendly interface for:
-- document question answering
-- summarization
-- document upload
-- cost/latency transparency
-
-Advanced retrieval settings are hidden by default.
 """
 
 from pathlib import Path
@@ -74,7 +66,6 @@ st.markdown(
     "hybrid retrieval, reranking, and transparent usage metrics."
 )
 st.caption("⚡ Powered by Hybrid RAG: semantic search + keyword search + reranking")
-st.info("Upload documents in the sidebar, rebuild the knowledge base, then ask a question below.")
 
 
 if "messages" not in st.session_state:
@@ -90,16 +81,29 @@ if "total_output_tokens" not in st.session_state:
     st.session_state.total_output_tokens = 0
 
 
-index = cached_load_index()
-chunks = cached_load_chunks()
-vectorizer, tfidf_matrix = cached_build_tfidf_index(chunks)
+index = None
+chunks = []
+vectorizer = None
+tfidf_matrix = None
+pipeline = None
+knowledge_base_ready = False
 
-pipeline = ModularRAGPipeline(
-    index=index,
-    chunks=chunks,
-    vectorizer=vectorizer,
-    tfidf_matrix=tfidf_matrix,
-)
+try:
+    index = cached_load_index()
+    chunks = cached_load_chunks()
+    vectorizer, tfidf_matrix = cached_build_tfidf_index(chunks)
+
+    pipeline = ModularRAGPipeline(
+        index=index,
+        chunks=chunks,
+        vectorizer=vectorizer,
+        tfidf_matrix=tfidf_matrix,
+    )
+
+    knowledge_base_ready = True
+
+except FileNotFoundError:
+    pass
 
 
 with st.sidebar:
@@ -196,6 +200,11 @@ with st.sidebar:
         st.session_state.total_input_tokens = 0
         st.session_state.total_output_tokens = 0
         st.rerun()
+
+
+if not knowledge_base_ready:
+    st.info("Upload documents in the sidebar, then click 'Rebuild knowledge base'.")
+    st.stop()
 
 
 if mode == "Chat":
