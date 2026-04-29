@@ -25,18 +25,14 @@ The architecture is modular and extensible, following patterns used in modern AI
 
 ### Main application view
 
-![Main application view](assets/main_ui.png)
+![Main application view](assets/main_ui.jpg)
 
 ### Cost tracking
 
-![Cost](assets/cost_tracking.png)
+![Cost](assets/cost_tracking.jpg)
 
 ### Retrieval sources and scoring
-![Retrieval sources](assets/retrieval_sources.png)
-
-### Evaluation
-
-![Evaluation](assets/evaluation.png)
+![Retrieval sources](assets/retrieval_sources.jpg)
 
 ---
 
