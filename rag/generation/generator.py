@@ -43,17 +43,14 @@ def _calculate_cost(model: str, input_tokens: int, output_tokens: int) -> float:
 def _generate_with_ollama(prompt: str, model: str) -> dict:
     """
     Generate text using Ollama HTTP API.
+
+    Uses /api/generate for compatibility with older Ollama versions.
     """
-    url = f"{OLLAMA_BASE_URL}/api/chat"
+    url = f"{OLLAMA_BASE_URL}/api/generate"
 
     payload = {
         "model": model,
-        "messages": [
-            {
-                "role": "user",
-                "content": prompt,
-            }
-        ],
+        "prompt": prompt,
         "stream": False,
     }
 
@@ -67,11 +64,11 @@ def _generate_with_ollama(prompt: str, model: str) -> dict:
 
     data = response.json()
 
-    if "message" not in data or "content" not in data["message"]:
+    if "response" not in data:
         raise RuntimeError(f"Unexpected Ollama response format: {data}")
 
     return {
-        "answer": data["message"]["content"].strip(),
+        "answer": data["response"].strip(),
         "input_tokens": None,
         "output_tokens": None,
         "cost_usd": 0.0,

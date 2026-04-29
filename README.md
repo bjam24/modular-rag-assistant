@@ -1,174 +1,177 @@
 # Modular RAG Assistant
 
-A fully modular Retrieval-Augmented Generation (RAG) system built from scratch, designed to resemble real-world production pipelines.
-
-This project demonstrates how modern LLM-based systems combine retrieval, ranking, and controlled generation to answer questions based on custom data.
+A modular Retrieval-Augmented Generation (RAG) system designed to reflect real-world production pipelines.  
+The project combines hybrid retrieval, reranking, and LLM-based generation with full transparency of token usage and cost.
 
 ---
 
 ## Overview
 
-This system allows you to:
+This system allows users to:
 
-- Ask questions over your own documents  
-- Generate answers grounded strictly in retrieved context  
-- Create structured summaries of knowledge  
-- Dynamically expand the knowledge base with new files  
-- Inspect retrieval results and debug the pipeline  
-- Handle noisy queries (e.g. typos) with automatic correction  
+- Query their own documents using natural language  
+- Generate answers grounded in retrieved context  
+- Create summaries based on document content  
+- Inspect retrieved sources and debug the pipeline  
+- Track token usage and estimated API costs  
+- Switch between local and API-based language models  
 
-The architecture follows a modular RAG design inspired by recent research.
+The architecture is modular and extensible, following patterns used in modern AI systems.
+
 ---
+
+
 ## Demo
 
-![Demo](assets/demo.gif)
+### Main application view
 
-Example of typo-tolerant query handling and grounded answer generation.
+![Main application view](assets/main_ui.png)
 
-If the animation does not load:
+### Cost tracking
 
-![Typo correction example](assets/typo_correction.jpg)
+![Cost](assets/cost_tracking.png)
 
----
+### Retrieval sources and scoring
+![Retrieval sources](assets/retrieval_sources.png)
 
-## Architecture
+### Evaluation
 
-The pipeline is divided into independent modules:
-```
-Pre-Retrieval
-↓
-Query Processing (rewrite + typo correction)
-↓
-Retrieval<br>
-↓
-Hybrid Search (FAISS + TF-IDF)
-↓
-Post-Retrieval
-↓
-Reranking + Filtering + Context Validation
-↓
-Generation
-↓
-LLM (Ollama - local)
-↓
-Orchestration
-↓
-Pipeline (chat / summary)
-```
+![Evaluation](assets/evaluation.png)
+
 ---
 
 ## Key Features
 
 ### Hybrid Retrieval
-- Dense search (FAISS + embeddings)
-- Sparse search (TF-IDF)
-- Score fusion with normalization
+- Dense search using FAISS embeddings  
+- Sparse search using TF-IDF  
+- Score fusion for improved relevance  
 
 ### Query Processing
-- Lightweight query rewriting
-- Typo correction using vocabulary and fuzzy matching
-- Improves robustness for noisy user input
+- Basic query normalization  
+- Typo correction for improved robustness  
 
 ### Reranking
-- Combines semantic similarity and keyword overlap
-- Improves precision of retrieved results
+- Combines semantic similarity and keyword overlap  
+- Improves precision of top retrieved results  
 
-### Hallucination Control
-- Context validation before generation
-- Refuses to answer when information is insufficient
+### Generation
+- Supports:
+  - OpenAI models (e.g. gpt-4.1-mini, gpt-4o-mini)
+  - Local models via Ollama  
+- Generates answers strictly based on retrieved context  
 
-### Local LLM
-- Runs fully locally via Ollama
-- No external API required
-
-### Dynamic Knowledge Base
-- Upload `.txt` files via UI
-- Rebuild index on demand
+### Cost and Token Tracking
+- Input and output token tracking  
+- Estimated cost per request  
+- Aggregated session usage  
 
 ### Evaluation
-- Custom test queries
-- Metrics: Top-1, Top-3, Top-5 hit rate, MRR, Recall@k
+- Retrieval evaluation framework  
+- Metrics:
+  - Top-1 / Top-3 / Top-5 accuracy  
+  - Mean Reciprocal Rank (MRR)  
+  - Recall@k  
+- Comparison of retrieval modes:
+  - dense vs sparse vs hybrid  
 
-### Streamlit UI
-- Chat interface
-- Summary mode
-- Source inspection
-- Query correction suggestions ("Did you mean ...")
+### User Interface
+- Streamlit-based interface  
+- Chat mode and summary mode  
+- Adjustable retrieval parameters  
+- Source inspection for each answer  
+
+---
+
+## Architecture
+
+Pre-Retrieval  
+↓  
+Query Processing (normalization + typo correction)  
+↓  
+Hybrid Retrieval (FAISS + TF-IDF)  
+↓  
+Reranking and Filtering  
+↓  
+Context Construction  
+↓  
+Generation (LLM)  
+↓  
+Pipeline (chat / summary)  
 
 ---
 
 ## Project Structure
-```
-rag/
-├── indexing/        # chunking, embeddings, FAISS index
-├── retrieval/       # dense, sparse, hybrid search
-├── pre_retrieval/   # query rewriting and correction
-├── post_retrieval/  # reranking, filtering, context building
-├── generation/      # prompts + LLM calls
-├── orchestration/   # main pipeline logic
-├── utils/           # loading, history handling
-├── config.py        # configuration
 
-evaluation/
-├── test_cases.py
-├── evaluate.py
+rag/  
+├── indexing/  
+├── retrieval/  
+├── pre_retrieval/  
+├── post_retrieval/  
+├── generation/  
+├── orchestration/  
+├── utils/  
+├── config.py  
 
-app.py               # Streamlit UI
-```
----
+evaluation/  
+├── test_cases.py  
+├── evaluate.py  
 
-## How It Works
-
-1. Documents are loaded and split into chunks  
-2. Chunks are embedded and indexed (FAISS + TF-IDF)  
-3. User query is processed (including typo correction)  
-4. Hybrid retrieval returns candidate documents  
-5. Results are reranked and filtered  
-6. Context is constructed from top results  
-7. LLM generates an answer strictly based on context  
-
----
-
-## Example Queries
-
-- What is TF-IDF?  
-- Explain RAG architecture  
-- What is the difference between dense and sparse retrieval?  
-- What is t0kenization?  
+app.py  
 
 ---
 
 ## Running the Project
 
-### 1. Install dependencies
+1. Install dependencies  
+pip install -r requirements.txt  
 
-pip install -r requirements.txt
+2. Configure environment  
+cp .env.example .env  
 
-### 2. Start Ollama
+Add your OpenAI API key:  
+OPENAI_API_KEY=your_key_here  
 
-ollama run llama3  
+3. (Optional) Run local models with Ollama  
+ollama pull llama3.1:8b  
 ollama pull nomic-embed-text  
 
-### 3. Build knowledge base
-
+4. Build the knowledge base  
 python -m rag.indexing.builder  
 
-### 4. Run the app
-
+5. Run the application  
 streamlit run app.py  
 
 ---
 
-## Tech Stack
+## Retrieval evaluation
 
-- Python  
-- FAISS  
-- Scikit-learn (TF-IDF)  
-- Ollama  
-- Streamlit  
+python -m evaluation.evaluate
+
+The retrieval component was evaluated using standard information retrieval metrics.
+
+| Mode   | Top-1 | Top-3 | Top-5 | MRR  | Recall@5 |
+|--------|------|------|------|------|----------|
+| Dense  | 0.90 | 0.90 | 1.00 | 0.92 | 1.00     |
+| Sparse | 0.80 | 0.90 | 1.00 | 0.85 | 1.00     |
+| Hybrid | 0.90 | 1.00 | 1.00 | 0.95 | 1.00     |
+
+Hybrid retrieval achieves the best ranking performance (MRR),
+while all methods reach full recall at top-5.
+
+---
+
+## Technology Stack
+
+Python  
+FAISS  
+Scikit-learn  
+OpenAI API  
+Ollama  
+Streamlit  
 
 ---
 
 ## Author
 
-Bartłomiej Jamiołkowski  
+Bartłomiej Jamiołkowski
