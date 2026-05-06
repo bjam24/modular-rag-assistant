@@ -1,18 +1,17 @@
-"""
-Streamlit UI for the Modular RAG Assistant.
-"""
+"""Streamlit UI for the Modular RAG Assistant."""
 
+from __future__ import annotations
 from pathlib import Path
-
-import faiss
-import streamlit as st
-
+from typing import Any
 from rag.config import DATA_DIR
 from rag.indexing.builder import rebuild_knowledge_base
 from rag.orchestration.pipeline import ModularRAGPipeline
 from rag.retrieval.sparse import build_tfidf_index
 from rag.utils.history import build_history
 from rag.utils.io import load_chunks, load_index
+
+import faiss
+import streamlit as st
 
 
 QUALITY_MODE_MAP = {
@@ -21,32 +20,59 @@ QUALITY_MODE_MAP = {
     "Accurate": "accurate",
 }
 
-OLLAMA_MODELS = [
-    "llama3.1:8b",
-]
+OLLAMA_MODELS = ["llama3.1:8b"]
+OPENAI_MODELS = ["gpt-4.1-mini", "gpt-4o-mini"]
 
-OPENAI_MODELS = [
-    "gpt-4.1-mini",
-    "gpt-4o-mini",
-]
+DEFAULT_FAISS_K = 20
+DEFAULT_TFIDF_K = 20
 
 
-@st.cache_resource
+@st.cache_resource(show_spinner=False)
 def cached_load_index() -> faiss.Index:
+    """Load cached FAISS index."""
     return load_index()
 
 
-@st.cache_data
-def cached_load_chunks() -> list[dict]:
+@st.cache_data(show_spinner=False)
+def cached_load_chunks() -> list[dict[str, Any]]:
+    """Load cached chunks."""
     return load_chunks()
 
 
-@st.cache_resource
-def cached_build_tfidf_index(chunks: list[dict]) -> tuple:
+@st.cache_resource(show_spinner=False)
+def cached_build_tfidf_index(chunks: list[dict[str, Any]]) -> tuple[Any, Any]:
+    """Build cached sparse index."""
     return build_tfidf_index(chunks)
 
 
+def setup_page() -> None:
+    """Set page config and sidebar styles."""
+    st.set_page_config(page_title="Modular RAG Assistant", layout="wide")
+
+    st.markdown(
+        """
+        <style>
+        section[data-testid="stSidebar"] h1,
+        section[data-testid="stSidebar"] h2,
+        section[data-testid="stSidebar"] h3 {
+            font-size: 1.35rem !important;
+            font-weight: 800 !important;
+        }
+
+        .sidebar-section-title {
+            font-size: 1.35rem;
+            font-weight: 800;
+            margin-top: 1.25rem;
+            margin-bottom: 0.75rem;
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
 def init_session_state() -> None:
+    """Initialize session defaults."""
     if "messages" not in st.session_state:
         st.session_state.messages = []
 
@@ -60,304 +86,308 @@ def init_session_state() -> None:
         st.session_state.total_output_tokens = 0
 
 
+def render_section_title(title: str) -> None:
+    """Render sidebar title."""
+    st.markdown(
+        f'<div class="sidebar-section-title">{title}</div>',
+        unsafe_allow_html=True,
+    )
+
+
+def render_header() -> None:
+    """Render app header."""
+    st.title("Modular RAG Assistant")
+    st.markdown(
+        "Ask questions about your documents using a modular RAG pipeline with "
+        "hybrid retrieval, reranking, and transparent usage metrics."
+    )
+    st.caption("⚡ Powered by Hybrid RAG: semantic search + keyword search + reranking")
+
+
 def render_session_usage() -> None:
-    session_cost_placeholder.metric(
-        "Total session cost (USD)",
-        f"${st.session_state.total_cost_usd:.6f}",
-    )
-    session_input_tokens_placeholder.metric(
-        "Total input tokens",
-        st.session_state.total_input_tokens,
-    )
-    session_output_tokens_placeholder.metric(
-        "Total output tokens",
-        st.session_state.total_output_tokens,
-    )
+    """Render session totals."""
+    st.metric("Total session cost (USD)", f"${st.session_state.total_cost_usd:.6f}")
+    st.metric("Total input tokens", st.session_state.total_input_tokens)
+    st.metric("Total output tokens", st.session_state.total_output_tokens)
 
 
-st.set_page_config(page_title="Modular RAG Assistant", layout="wide")
-
-st.markdown(
-    """
-    <style>
-    section[data-testid="stSidebar"] h1,
-    section[data-testid="stSidebar"] h2,
-    section[data-testid="stSidebar"] h3 {
-        font-size: 1.35rem !important;
-        font-weight: 800 !important;
-    }
-
-    .sidebar-section-title {
-        font-size: 1.35rem;
-        font-weight: 800;
-        margin-top: 1.25rem;
-        margin-bottom: 0.75rem;
-    }
-    </style>
-    """,
-    unsafe_allow_html=True,
-)
-
-init_session_state()
-
-st.title("Modular RAG Assistant")
-st.markdown(
-    "Ask questions about your documents using a modular RAG pipeline with "
-    "hybrid retrieval, reranking, and transparent usage metrics."
-)
-st.caption("⚡ Powered by Hybrid RAG: semantic search + keyword search + reranking")
+def update_session_usage(tokens: dict[str, int] | None, cost_usd: float | None) -> None:
+    """Update session totals."""
+    tokens = tokens or {}
+    st.session_state.total_cost_usd += cost_usd or 0.0
+    st.session_state.total_input_tokens += tokens.get("input", 0)
+    st.session_state.total_output_tokens += tokens.get("output", 0)
 
 
-index = None
-chunks = []
-vectorizer = None
-tfidf_matrix = None
-pipeline = None
-knowledge_base_ready = False
+def reset_conversation() -> None:
+    """Reset conversation state."""
+    st.session_state.messages = []
+    st.session_state.total_cost_usd = 0.0
+    st.session_state.total_input_tokens = 0
+    st.session_state.total_output_tokens = 0
+    st.rerun()
 
-try:
-    index = cached_load_index()
-    chunks = cached_load_chunks()
-    vectorizer, tfidf_matrix = cached_build_tfidf_index(chunks)
 
-    pipeline = ModularRAGPipeline(
+def load_pipeline() -> ModularRAGPipeline | None:
+    """Load RAG pipeline."""
+    try:
+        index = cached_load_index()
+        chunks = cached_load_chunks()
+        vectorizer, tfidf_matrix = cached_build_tfidf_index(chunks)
+    except FileNotFoundError:
+        return None
+
+    return ModularRAGPipeline(
         index=index,
         chunks=chunks,
         vectorizer=vectorizer,
         tfidf_matrix=tfidf_matrix,
     )
 
-    knowledge_base_ready = True
 
-except FileNotFoundError:
-    pass
+def save_uploaded_file() -> None:
+    """Save uploaded file."""
+    uploaded_file = st.file_uploader("Upload a .txt or .pdf file", type=["txt", "pdf"])
+    if uploaded_file is None:
+        return
+
+    data_dir = Path(DATA_DIR)
+    data_dir.mkdir(parents=True, exist_ok=True)
+
+    file_path = data_dir / uploaded_file.name
+    file_path.write_bytes(uploaded_file.getbuffer())
+    st.success(f"Saved file: {uploaded_file.name}")
 
 
-with st.sidebar:
-    st.markdown(
-        '<div class="sidebar-section-title">Assistant settings</div>',
-        unsafe_allow_html=True,
-    )
+def handle_rebuild() -> None:
+    """Handle index rebuild."""
+    if not st.button("Rebuild knowledge base"):
+        return
 
-    mode = st.radio(
-        "Mode",
-        ["Chat", "Summary"],
-        help="Chat answers questions. Summary creates structured summaries.",
-    )
+    with st.spinner("Rebuilding knowledge base..."):
+        try:
+            rebuild_knowledge_base()
+            st.cache_resource.clear()
+            st.cache_data.clear()
+            st.success("Knowledge base updated.")
+            st.rerun()
+        except Exception as exc:
+            st.error(f"Error while updating knowledge base: {exc}")
 
-    quality_label = st.selectbox(
-        "Quality mode",
-        ["Fast", "Balanced", "Accurate"],
-        index=1,
-        help=(
-            "Fast uses less context and is quicker. "
-            "Balanced is the default. "
-            "Accurate uses more context and may be slower."
-        ),
-    )
 
-    generation_mode = QUALITY_MODE_MAP[quality_label]
-    st.caption("Choose how much context the assistant should use.")
+def render_sidebar() -> dict[str, Any]:
+    """Render sidebar settings."""
+    with st.sidebar:
+        render_section_title("Assistant settings")
 
-    with st.expander("LLM provider settings"):
-        llm_provider_label = st.selectbox(
-            "Provider",
-            ["Ollama local", "OpenAI API"],
-            help="Choose whether answers should be generated locally or through OpenAI API.",
+        mode = st.radio(
+            "Mode",
+            ["Chat", "Summary"],
+            help="Chat answers questions. Summary creates structured summaries.",
         )
 
-        if llm_provider_label == "Ollama local":
-            llm_provider = "ollama"
-            llm_model = st.selectbox(
-                "Model",
-                OLLAMA_MODELS,
+        quality_label = st.selectbox(
+            "Quality mode",
+            ["Fast", "Balanced", "Accurate"],
+            index=1,
+            help=(
+                "Fast uses less context and is quicker. "
+                "Balanced is the default. "
+                "Accurate uses more context and may be slower."
+            ),
+        )
+        st.caption("Choose how much context the assistant should use.")
+
+        with st.expander("LLM provider settings"):
+            provider_label = st.selectbox(
+                "Provider",
+                ["Ollama local", "OpenAI API"],
+                help="Choose whether answers should be generated locally or through OpenAI API.",
+            )
+
+            if provider_label == "Ollama local":
+                llm_provider = "ollama"
+                llm_model = st.selectbox("Model", OLLAMA_MODELS, index=0)
+                st.caption("Runs locally through Ollama. API cost is always $0.")
+            else:
+                llm_provider = "openai"
+                llm_model = st.selectbox("Model", OPENAI_MODELS, index=0)
+                st.caption("Uses OpenAI API. Cost is estimated from input and output tokens.")
+
+        with st.expander("Advanced retrieval settings"):
+            retrieval_mode = st.selectbox(
+                "Retrieval mode",
+                options=["hybrid", "dense", "sparse"],
                 index=0,
             )
-            st.caption("Runs locally through Ollama. API cost is always $0.")
 
-        else:
-            llm_provider = "openai"
-            llm_model = st.selectbox(
-                "Model",
-                OPENAI_MODELS,
-                index=0,
+            top_k = st.slider(
+                "Number of retrieved chunks",
+                min_value=1,
+                max_value=10,
+                value=5,
             )
-            st.caption("Uses OpenAI API. Cost is estimated from input and output tokens.")
 
-    with st.expander("Advanced retrieval settings"):
-        retrieval_mode = st.selectbox(
-            "Retrieval mode",
-            options=["hybrid", "dense", "sparse"],
-            index=0,
-        )
+            alpha = st.slider(
+                "Hybrid alpha",
+                min_value=0.0,
+                max_value=1.0,
+                value=0.6,
+                step=0.1,
+                help="Higher value gives more weight to dense vector search.",
+            )
 
-        top_k = st.slider(
-            "Number of retrieved chunks",
-            min_value=1,
-            max_value=10,
-            value=5,
-        )
+        with st.expander("Session usage"):
+            render_session_usage()
+            if llm_provider == "openai":
+                st.caption("Using OpenAI API — cost accumulates per query.")
+            else:
+                st.caption("Using local model — no API cost.")
 
-        alpha = st.slider(
-            "Hybrid alpha",
-            min_value=0.0,
-            max_value=1.0,
-            value=0.6,
-            step=0.1,
-            help="Higher value gives more weight to dense vector search.",
-        )
+        render_section_title("Your documents")
+        save_uploaded_file()
+        handle_rebuild()
 
-    with st.expander("Session usage"):
-        session_cost_placeholder = st.empty()
-        session_input_tokens_placeholder = st.empty()
-        session_output_tokens_placeholder = st.empty()
+        if st.button("Reset conversation"):
+            reset_conversation()
 
-        if llm_provider == "openai":
-            st.caption("Using OpenAI API — cost accumulates per query.")
+    return {
+        "mode": mode,
+        "quality_label": quality_label,
+        "generation_mode": QUALITY_MODE_MAP[quality_label],
+        "llm_provider": llm_provider,
+        "llm_model": llm_model,
+        "retrieval_mode": retrieval_mode,
+        "top_k": top_k,
+        "alpha": alpha,
+    }
+
+
+def render_request_usage(
+    tokens: dict[str, int] | None,
+    cost_usd: float,
+    config: dict[str, Any],
+    latency: float | None = None,
+) -> None:
+    """Render usage for one request."""
+    tokens = tokens or {}
+
+    with st.expander("Usage details"):
+        if latency is None:
+            col1, col2 = st.columns(2)
         else:
-            st.caption("Using local model — no API cost.")
+            col0, col1, col2 = st.columns(3)
+            with col0:
+                st.metric("Latency", f"{latency:.2f}s")
 
-    st.markdown(
-        '<div class="sidebar-section-title">Your documents</div>',
-        unsafe_allow_html=True,
-    )
+        with col1:
+            st.metric("Estimated cost", f"${cost_usd:.6f}")
 
-    uploaded_file = st.file_uploader(
-        "Upload a .txt or .pdf file",
-        type=["txt", "pdf"],
-    )
+        with col2:
+            st.metric(
+                "Tokens",
+                f"{tokens.get('input', 0)} in / {tokens.get('output', 0)} out",
+            )
 
-    if uploaded_file:
-        Path(DATA_DIR).mkdir(parents=True, exist_ok=True)
-        file_path = Path(DATA_DIR) / uploaded_file.name
+        details = [
+            f"Provider: {config['llm_provider']}",
+            f"Model: {config['llm_model']}",
+        ]
 
-        with open(file_path, "wb") as f:
-            f.write(uploaded_file.getbuffer())
+        if config.get("quality_label"):
+            details.append(f"Quality mode: {config['quality_label']}")
 
-        st.success(f"Saved file: {uploaded_file.name}")
-
-    if st.button("Rebuild knowledge base"):
-        with st.spinner("Rebuilding knowledge base..."):
-            try:
-                rebuild_knowledge_base()
-                st.cache_resource.clear()
-                st.cache_data.clear()
-                st.success("Knowledge base updated.")
-                st.rerun()
-            except Exception as e:
-                st.error(f"Error while updating knowledge base: {e}")
-
-    if st.button("Reset conversation"):
-        st.session_state.messages = []
-        st.session_state.total_cost_usd = 0.0
-        st.session_state.total_input_tokens = 0
-        st.session_state.total_output_tokens = 0
-        st.rerun()
+        details.append(f"Retrieval mode: {config['retrieval_mode']}")
+        st.caption(" | ".join(details))
 
 
-render_session_usage()
+def render_sources(results: list[dict[str, Any]]) -> None:
+    """Render source chunks."""
+    if not results:
+        return
+
+    st.subheader("Sources")
+
+    for result in results:
+        label = (
+            f"{result.get('rank', '?')} | {result.get('source', 'unknown source')} "
+            f"| hybrid: {result.get('hybrid_score', 0.0):.3f} "
+            f"| vec: {result.get('vector_score', 0.0):.3f} "
+            f"| tfidf: {result.get('tfidf_score', 0.0):.3f}"
+        )
+
+        with st.expander(label):
+            st.write(result.get("text", ""))
 
 
-if not knowledge_base_ready:
-    st.info("Upload documents in the sidebar, then click 'Rebuild knowledge base'.")
-    st.stop()
+def render_chat_history() -> None:
+    """Render previous messages."""
+    for message in st.session_state.messages:
+        with st.chat_message(message["role"]):
+            st.write(message["content"])
 
 
-if mode == "Chat":
-    for msg in st.session_state.messages:
-        with st.chat_message(msg["role"]):
-            st.write(msg["content"])
+def render_chat_mode(pipeline: ModularRAGPipeline, config: dict[str, Any]) -> None:
+    """Render chat mode."""
+    render_chat_history()
 
     query = st.chat_input("e.g. What are the key ideas in this document?")
+    if not query:
+        return
 
-    if query:
-        st.session_state.messages.append({"role": "user", "content": query})
+    st.session_state.messages.append({"role": "user", "content": query})
 
-        with st.chat_message("user"):
-            st.write(query)
+    with st.chat_message("user"):
+        st.write(query)
 
-        history = build_history(st.session_state.messages[:-1])
+    history = build_history(st.session_state.messages[:-1])
 
-        with st.spinner("Searching documents and generating answer..."):
-            try:
-                output = pipeline.run_chat(
-                    query=query,
-                    history=history,
-                    top_k=top_k,
-                    faiss_k=20,
-                    tfidf_k=20,
-                    alpha=alpha,
-                    retrieval_mode=retrieval_mode,
-                    generation_mode=generation_mode,
-                    llm_provider=llm_provider,
-                    llm_model=llm_model,
-                )
+    with st.spinner("Searching documents and generating answer..."):
+        try:
+            output = pipeline.run_chat(
+                query=query,
+                history=history,
+                top_k=config["top_k"],
+                faiss_k=DEFAULT_FAISS_K,
+                tfidf_k=DEFAULT_TFIDF_K,
+                alpha=config["alpha"],
+                retrieval_mode=config["retrieval_mode"],
+                generation_mode=config["generation_mode"],
+                llm_provider=config["llm_provider"],
+                llm_model=config["llm_model"],
+            )
+        except Exception as exc:
+            output = {
+                "answer": f"An error occurred: {exc}",
+                "results": [],
+                "corrected_query": None,
+                "latency": 0.0,
+                "tokens": {"input": 0, "output": 0},
+                "cost_usd": 0.0,
+            }
 
-                answer = output["answer"]
-                results = output["results"]
-                corrected_query = output.get("corrected_query")
+    answer = output.get("answer", "")
+    corrected_query = output.get("corrected_query")
+    results = output.get("results", [])
+    tokens = output.get("tokens", {})
+    cost_usd = output.get("cost_usd", 0.0)
+    latency = output.get("latency", 0.0)
 
-                latency = output.get("latency", 0.0)
-                tokens = output.get("tokens", {})
-                cost = output.get("cost_usd", 0.0)
+    update_session_usage(tokens, cost_usd)
+    st.session_state.messages.append({"role": "assistant", "content": answer})
 
-                st.session_state.total_cost_usd += cost
-                st.session_state.total_input_tokens += tokens.get("input", 0)
-                st.session_state.total_output_tokens += tokens.get("output", 0)
+    with st.chat_message("assistant"):
+        if corrected_query and corrected_query.casefold() != query.casefold():
+            st.caption(f"Did you mean: {corrected_query}?")
 
-                render_session_usage()
+        st.write(answer)
+        render_request_usage(tokens, cost_usd, config, latency=latency)
 
-            except Exception as e:
-                answer = f"An error occurred: {e}"
-                results = []
-                corrected_query = None
-                latency = 0.0
-                tokens = {"input": 0, "output": 0}
-                cost = 0.0
-
-        st.session_state.messages.append({"role": "assistant", "content": answer})
-
-        with st.chat_message("assistant"):
-            if corrected_query and corrected_query.lower() != query.lower():
-                st.caption(f"Did you mean: {corrected_query}?")
-
-            st.write(answer)
-
-            with st.expander("Usage details"):
-                col1, col2, col3 = st.columns(3)
-
-                with col1:
-                    st.metric("Latency", f"{latency:.2f}s")
-
-                with col2:
-                    st.metric("Estimated cost", f"${cost:.6f}")
-
-                with col3:
-                    st.metric(
-                        "Tokens",
-                        f"{tokens.get('input', 0)} in / "
-                        f"{tokens.get('output', 0)} out",
-                    )
-
-                st.caption(
-                    f"Provider: {llm_provider} | "
-                    f"Model: {llm_model} | "
-                    f"Quality mode: {quality_label} | "
-                    f"Retrieval mode: {retrieval_mode}"
-                )
-
-        if results:
-            st.subheader("Sources")
-
-            for r in results:
-                with st.expander(
-                    f"{r['rank']} | {r['source']} | hybrid: {r['hybrid_score']:.3f} "
-                    f"| vec: {r['vector_score']:.3f} | tfidf: {r['tfidf_score']:.3f}"
-                ):
-                    st.write(r["text"])
+    render_sources(results)
 
 
-elif mode == "Summary":
+def render_summary_mode(pipeline: ModularRAGPipeline, config: dict[str, Any]) -> None:
+    """Render summary mode."""
     st.subheader("Summary Generator")
 
     topic = st.text_input(
@@ -365,66 +395,60 @@ elif mode == "Summary":
         placeholder="e.g. retrieval augmented generation, tokenization, BERT",
     )
 
-    if st.button("Generate summary") and topic.strip():
-        with st.spinner("Searching documents and generating summary..."):
-            try:
-                output = pipeline.run_summary(
-                    topic=topic,
-                    top_k=top_k,
-                    faiss_k=20,
-                    tfidf_k=20,
-                    alpha=alpha,
-                    retrieval_mode=retrieval_mode,
-                    llm_provider=llm_provider,
-                    llm_model=llm_model,
-                )
+    if not st.button("Generate summary") or not topic.strip():
+        return
 
-                summary = output["summary"]
-                results = output["results"]
-
-                tokens = output.get("tokens", {})
-                cost = output.get("cost_usd", 0.0)
-
-                st.session_state.total_cost_usd += cost
-                st.session_state.total_input_tokens += tokens.get("input", 0)
-                st.session_state.total_output_tokens += tokens.get("output", 0)
-
-                render_session_usage()
-
-            except Exception as e:
-                summary = f"An error occurred: {e}"
-                results = []
-                tokens = {"input": 0, "output": 0}
-                cost = 0.0
-
-        st.subheader("Summary")
-        st.write(summary)
-
-        with st.expander("Usage details"):
-            col1, col2 = st.columns(2)
-
-            with col1:
-                st.metric("Estimated cost", f"${cost:.6f}")
-
-            with col2:
-                st.metric(
-                    "Tokens",
-                    f"{tokens.get('input', 0)} in / "
-                    f"{tokens.get('output', 0)} out",
-                )
-
-            st.caption(
-                f"Provider: {llm_provider} | "
-                f"Model: {llm_model} | "
-                f"Retrieval mode: {retrieval_mode}"
+    with st.spinner("Searching documents and generating summary..."):
+        try:
+            output = pipeline.run_summary(
+                topic=topic.strip(),
+                top_k=config["top_k"],
+                faiss_k=DEFAULT_FAISS_K,
+                tfidf_k=DEFAULT_TFIDF_K,
+                alpha=config["alpha"],
+                retrieval_mode=config["retrieval_mode"],
+                llm_provider=config["llm_provider"],
+                llm_model=config["llm_model"],
             )
+        except Exception as exc:
+            output = {
+                "summary": f"An error occurred: {exc}",
+                "results": [],
+                "tokens": {"input": 0, "output": 0},
+                "cost_usd": 0.0,
+            }
 
-        if results:
-            st.subheader("Sources")
+    summary = output.get("summary", "")
+    results = output.get("results", [])
+    tokens = output.get("tokens", {})
+    cost_usd = output.get("cost_usd", 0.0)
 
-            for r in results:
-                with st.expander(
-                    f"{r['rank']} | {r['source']} | hybrid: {r['hybrid_score']:.3f} "
-                    f"| vec: {r['vector_score']:.3f} | tfidf: {r['tfidf_score']:.3f}"
-                ):
-                    st.write(r["text"])
+    update_session_usage(tokens, cost_usd)
+
+    st.subheader("Summary")
+    st.write(summary)
+    render_request_usage(tokens, cost_usd, config)
+    render_sources(results)
+
+
+def main() -> None:
+    """Run app."""
+    setup_page()
+    init_session_state()
+    render_header()
+
+    config = render_sidebar()
+    pipeline = load_pipeline()
+
+    if pipeline is None:
+        st.info("Upload documents in the sidebar, then click 'Rebuild knowledge base'.")
+        st.stop()
+
+    if config["mode"] == "Chat":
+        render_chat_mode(pipeline, config)
+    else:
+        render_summary_mode(pipeline, config)
+
+
+if __name__ == "__main__":
+    main()
